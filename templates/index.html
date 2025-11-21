@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Henghengmao - 视频解析与图片下载</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            padding: 40px 0;
+            color: white;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            opacity: 0.9;
+            font-size: 1.1em;
+        }
+
+        .card {
+            background: white;
+            border-radius: 16px;
+            padding: 30px;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+        }
+
+        .tabs {
+            display: flex;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #eee;
+        }
+
+        .tab {
+            padding: 12px 24px;
+            cursor: pointer;
+            border: none;
+            background: none;
+            font-size: 16px;
+            color: #666;
+            position: relative;
+            transition: color 0.3s;
+        }
+
+        .tab.active {
+            color: #667eea;
+            font-weight: 600;
+        }
+
+        .tab.active::after {
+            content: '';
+            position: absolute;
+            bottom: -2px;
+            left: 0;
+            width: 100%;
+            height: 2px;
+            background: #667eea;
+        }
+
+        .input-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .input-group input {
+            flex: 1;
+            padding: 14px 18px;
+            border: 2px solid #eee;
+            border-radius: 10px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+
+        .input-group input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .btn {
+            padding: 14px 28px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .result {
+            display: none;
+        }
+
+        .result.show {
+            display: block;
+        }
+
+        .video-result {
+            text-align: center;
+        }
+
+        .video-cover {
+            max-width: 300px;
+            border-radius: 10px;
+            margin-bottom: 15px;
+        }
+
+        .video-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 10px;
+            color: #333;
+        }
+
+        .video-author {
+            color: #666;
+            margin-bottom: 15px;
+        }
+
+        .video-stats {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            margin-bottom: 20px;
+            color: #888;
+            font-size: 14px;
+        }
+
+        .download-btn {
+            display: inline-block;
+            padding: 12px 30px;
+            background: #28a745;
+            color: white;
+            text-decoration: none;
+            border-radius: 8px;
+            font-weight: 600;
+            transition: background 0.3s;
+        }
+
+        .download-btn:hover {
+            background: #218838;
+        }
+
+        .image-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+            gap: 15px;
+        }
+
+        .image-item {
+            position: relative;
+            border-radius: 8px;
+            overflow: hidden;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        .image-item:hover {
+            transform: scale(1.05);
+        }
+
+        .image-item img {
+            width: 100%;
+            height: 150px;
+            object-fit: cover;
+        }
+
+        .image-item .overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+
+        .image-item:hover .overlay {
+            opacity: 1;
+        }
+
+        .overlay a {
+            color: white;
+            text-decoration: none;
+            padding: 8px 16px;
+            background: rgba(255, 255, 255, 0.2);
+            border-radius: 5px;
+            font-size: 14px;
+        }
+
+        .section-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: #333;
+            margin: 20px 0 15px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #eee;
+        }
+
+        .product-info {
+            margin-bottom: 20px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+
+        .product-info h3 {
+            font-size: 18px;
+            margin-bottom: 10px;
+        }
+
+        .product-info p {
+            color: #666;
+            margin: 5px 0;
+        }
+
+        .price {
+            color: #e74c3c;
+            font-size: 20px;
+            font-weight: 600;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+        }
+
+        .loading::after {
+            content: '';
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 2px solid #667eea;
+            border-top-color: transparent;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-left: 10px;
+            vertical-align: middle;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .error {
+            background: #fee;
+            color: #c00;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 15px;
+        }
+
+        .download-all {
+            display: block;
+            text-align: center;
+            margin-top: 20px;
+        }
+
+        .footer {
+            text-align: center;
+            padding: 30px 0;
+            color: rgba(255, 255, 255, 0.8);
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Henghengmao</h1>
+            <p>抖音视频解析 & 商品图片下载</p>
+        </div>
+
+        <div class="card">
+            <div class="tabs">
+                <button class="tab active" data-tab="video">视频解析</button>
+                <button class="tab" data-tab="product">商品图片</button>
+            </div>
+
+            <!-- 视频解析 -->
+            <div id="video-panel">
+                <div class="input-group">
+                    <input type="text" id="video-url" placeholder="粘贴抖音视频链接...">
+                    <button class="btn" onclick="parseVideo()">解析</button>
+                </div>
+                <div id="video-result" class="result"></div>
+            </div>
+
+            <!-- 商品图片 -->
+            <div id="product-panel" style="display: none;">
+                <div class="input-group">
+                    <input type="text" id="product-url" placeholder="粘贴抖音商品链接...">
+                    <button class="btn" onclick="parseProduct()">解析</button>
+                </div>
+                <div id="product-result" class="result"></div>
+            </div>
+        </div>
+
+        <div class="footer">
+            <p>支持抖音视频无水印下载和商品详情图片提取</p>
+        </div>
+    </div>
+
+    <script>
+        // Tab切换
+        document.querySelectorAll('.tab').forEach(tab => {
+            tab.addEventListener('click', function() {
+                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+                this.classList.add('active');
+
+                const tabName = this.dataset.tab;
+                document.getElementById('video-panel').style.display = tabName === 'video' ? 'block' : 'none';
+                document.getElementById('product-panel').style.display = tabName === 'product' ? 'block' : 'none';
+            });
+        });
+
+        // 解析视频
+        async function parseVideo() {
+            const url = document.getElementById('video-url').value.trim();
+            const resultDiv = document.getElementById('video-result');
+
+            if (!url) {
+                resultDiv.innerHTML = '<div class="error">请输入视频链接</div>';
+                resultDiv.classList.add('show');
+                return;
+            }
+
+            resultDiv.innerHTML = '<div class="loading">正在解析视频</div>';
+            resultDiv.classList.add('show');
+
+            try {
+                const response = await fetch('/api/video/parse', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url })
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.detail || '解析失败');
+                }
+
+                resultDiv.innerHTML = `
+                    <div class="video-result">
+                        ${data.cover_url ? `<img src="${data.cover_url}" class="video-cover" alt="封面">` : ''}
+                        <div class="video-title">${data.title || '无标题'}</div>
+                        <div class="video-author">@${data.author || '未知作者'}</div>
+                        <div class="video-stats">
+                            <span>点赞 ${formatNumber(data.statistics?.digg_count || 0)}</span>
+                            <span>评论 ${formatNumber(data.statistics?.comment_count || 0)}</span>
+                            <span>分享 ${formatNumber(data.statistics?.share_count || 0)}</span>
+                        </div>
+                        <a href="/api/proxy?url=${encodeURIComponent(data.video_url)}&filename=${encodeURIComponent(data.title || 'video')}"
+                           class="download-btn" target="_blank">
+                            下载无水印视频
+                        </a>
+                        ${data.music_url ? `
+                            <br><br>
+                            <a href="/api/proxy?url=${encodeURIComponent(data.music_url)}&filename=${encodeURIComponent('music')}"
+                               class="download-btn" style="background: #17a2b8;" target="_blank">
+                                下载音乐
+                            </a>
+                        ` : ''}
+                    </div>
+                `;
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="error">${error.message}</div>`;
+            }
+        }
+
+        // 解析商品
+        async function parseProduct() {
+            const url = document.getElementById('product-url').value.trim();
+            const resultDiv = document.getElementById('product-result');
+
+            if (!url) {
+                resultDiv.innerHTML = '<div class="error">请输入商品链接</div>';
+                resultDiv.classList.add('show');
+                return;
+            }
+
+            resultDiv.innerHTML = '<div class="loading">正在解析商品图片</div>';
+            resultDiv.classList.add('show');
+
+            try {
+                const response = await fetch('/api/product/parse', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url })
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.detail || '解析失败');
+                }
+
+                let html = '';
+
+                // 商品信息
+                if (data.title) {
+                    html += `
+                        <div class="product-info">
+                            <h3>${data.title}</h3>
+                            ${data.price ? `<p class="price">¥${data.price}</p>` : ''}
+                            ${data.shop_name ? `<p>店铺: ${data.shop_name}</p>` : ''}
+                            ${data.sales ? `<p>销量: ${data.sales}</p>` : ''}
+                        </div>
+                    `;
+                }
+
+                // 主图
+                if (data.main_images && data.main_images.length > 0) {
+                    html += `<div class="section-title">主图 (${data.main_images.length}张)</div>`;
+                    html += '<div class="image-grid">';
+                    data.main_images.forEach((img, index) => {
+                        html += `
+                            <div class="image-item">
+                                <img src="${img.url}" alt="主图${index + 1}">
+                                <div class="overlay">
+                                    <a href="/api/proxy?url=${encodeURIComponent(img.url)}&filename=main_${index + 1}" target="_blank">下载</a>
+                                </div>
+                            </div>
+                        `;
+                    });
+                    html += '</div>';
+                }
+
+                // 详情图
+                if (data.detail_images && data.detail_images.length > 0) {
+                    html += `<div class="section-title">详情图 (${data.detail_images.length}张)</div>`;
+                    html += '<div class="image-grid">';
+                    data.detail_images.forEach((img, index) => {
+                        html += `
+                            <div class="image-item">
+                                <img src="${img.url}" alt="详情图${index + 1}">
+                                <div class="overlay">
+                                    <a href="/api/proxy?url=${encodeURIComponent(img.url)}&filename=detail_${index + 1}" target="_blank">下载</a>
+                                </div>
+                            </div>
+                        `;
+                    });
+                    html += '</div>';
+                }
+
+                // SKU图
+                if (data.sku_images && data.sku_images.length > 0) {
+                    html += `<div class="section-title">SKU图 (${data.sku_images.length}张)</div>`;
+                    html += '<div class="image-grid">';
+                    data.sku_images.forEach((img, index) => {
+                        html += `
+                            <div class="image-item">
+                                <img src="${img.url}" alt="SKU图${index + 1}">
+                                <div class="overlay">
+                                    <a href="/api/proxy?url=${encodeURIComponent(img.url)}&filename=sku_${index + 1}" target="_blank">下载</a>
+                                </div>
+                            </div>
+                        `;
+                    });
+                    html += '</div>';
+                }
+
+                if (!html) {
+                    html = '<div class="error">未找到图片</div>';
+                }
+
+                resultDiv.innerHTML = html;
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="error">${error.message}</div>`;
+            }
+        }
+
+        // 格式化数字
+        function formatNumber(num) {
+            if (num >= 10000) {
+                return (num / 10000).toFixed(1) + 'w';
+            }
+            return num.toString();
+        }
+
+        // 回车键触发解析
+        document.getElementById('video-url').addEventListener('keypress', e => {
+            if (e.key === 'Enter') parseVideo();
+        });
+        document.getElementById('product-url').addEventListener('keypress', e => {
+            if (e.key === 'Enter') parseProduct();
+        });
+    </script>
+</body>
+</html>
