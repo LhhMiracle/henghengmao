@@ -91,7 +91,7 @@ async def parse_product(req: ParseRequest):
         raise HTTPException(status_code=400, detail="URL不能为空")
 
     # 判断平台并解析
-    if 'douyin.com' in url or 'haohuo.douyin.com' in url:
+    if 'douyin.com' in url or 'jinritemai.com' in url:
         parser = DouyinProductParser()
         try:
             result = await parser.parse(url)
@@ -111,6 +111,8 @@ async def proxy_download(url: str, filename: str = "download"):
     """
     代理下载文件（解决跨域和防盗链问题）
     """
+    import urllib.parse
+
     if not url:
         raise HTTPException(status_code=400, detail="URL不能为空")
 
@@ -144,11 +146,14 @@ async def proxy_download(url: str, filename: str = "download"):
         if not filename.endswith('.webp'):
             filename += '.webp'
 
+    # 处理中文文件名 - 使用 RFC 5987 编码
+    encoded_filename = urllib.parse.quote(filename)
+
     return StreamingResponse(
         stream_response(),
         media_type=content_type,
         headers={
-            'Content-Disposition': f'attachment; filename="{filename}"'
+            'Content-Disposition': f"attachment; filename*=UTF-8''{encoded_filename}"
         }
     )
 

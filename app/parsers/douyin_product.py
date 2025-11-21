@@ -6,8 +6,18 @@ Douyin Product Image Parser - Extract all images from product detail page
 import re
 import json
 import httpx
+import asyncio
 from typing import List, Optional
 from pydantic import BaseModel
+from playwright.async_api import async_playwright
+
+# 可选导入 undetected-chromedriver
+try:
+    import undetected_chromedriver as uc
+    from selenium.webdriver.common.by import By
+    HAS_UNDETECTED = True
+except ImportError:
+    HAS_UNDETECTED = False
 
 
 class ProductImage(BaseModel):
@@ -105,15 +115,155 @@ class DouyinProductParser:
             raise ValueError(f"Cannot extract product ID from URL: {url}")
 
         # 尝试多种方式获取商品数据
-        try:
-            return await self._parse_from_api(product_id)
-        except Exception:
-            pass
+        errors = []
 
+        # 方法1: 尝试 jinritemai H5 API
         try:
-            return await self._parse_from_webpage(product_id, url)
+            result = await self._parse_from_jinritemai_api(product_id)
+            if result.main_images or result.detail_images:
+                return result
         except Exception as e:
-            raise Exception(f"Failed to parse product: {e}")
+            errors.append(f"jinritemai_api: {e}")
+
+        # 方法2: 尝试原有API
+        try:
+            result = await self._parse_from_api(product_id)
+            if result.main_images or result.detail_images:
+                return result
+        except Exception as e:
+            errors.append(f"api: {e}")
+
+        # 方法3: 尝试移动端页面
+        try:
+            result = await self._parse_from_mobile_page(product_id)
+            if result.main_images or result.detail_images:
+                return result
+        except Exception as e:
+            errors.append(f"mobile_page: {e}")
+
+        # 方法4: 尝试网页解析
+        try:
+            result = await self._parse_from_webpage(product_id, url)
+            if result.main_images or result.detail_images:
+                return result
+        except Exception as e:
+            errors.append(f"webpage: {e}")
+
+        # 方法5: 使用 undetected-chromedriver (最后手段)
+        if HAS_UNDETECTED:
+            try:
+                result = await self._parse_with_undetected(product_id, url)
+                if result.main_images or result.detail_images:
+                    return result
+            except Exception as e:
+                errors.append(f"undetected: {e}")
+
+        raise Exception(f"Failed to parse product with all methods: {'; '.join(errors)}")
+
+    async def _parse_from_jinritemai_api(self, product_id: str) -> ProductInfo:
+        """
+        通过 jinritemai H5 API 获取商品信息
+        """
+        api_url = f"https://haohuo.jinritemai.com/ecom/product/detail/h5/sc/"
+
+        # 使用移动端 User-Agent
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1',
+            'Accept': 'application/json, text/plain, */*',
+            'Accept-Language': 'zh-CN,zh;q=0.9',
+            'Referer': f'https://haohuo.jinritemai.com/views/product/item2?id={product_id}',
+            'Origin': 'https://haohuo.jinritemai.com',
+        }
+
+        params = {
+            'id': product_id,
+            'product_id': product_id,
+        }
+
+        async with httpx.AsyncClient(headers=headers, follow_redirects=True, timeout=30.0) as client:
+            response = await client.get(api_url, params=params)
+
+            if response.status_code != 200:
+                raise Exception(f"API returned status {response.status_code}")
+
+            data = response.json()
+
+            if data.get('code') != 0 and data.get('status_code') != 0:
+                raise Exception(f"API error: {data.get('msg', data.get('message', 'Unknown error'))}")
+
+            product_data = data.get('data', {})
+            if not product_data:
+                raise Exception("No product data in response")
+
+            return self._extract_product_info(product_data, product_id)
+
+    async def _parse_from_mobile_page(self, product_id: str) -> ProductInfo:
+        """
+        通过移动端页面获取商品信息
+        """
+        # 移动端商品页面URL
+        url = f"https://haohuo.jinritemai.com/views/product/item2?id={product_id}"
+
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'zh-CN,zh;q=0.9',
+        }
+
+        async with httpx.AsyncClient(headers=headers, follow_redirects=True, timeout=30.0) as client:
+            response = await client.get(url)
+            html = response.text
+
+        # 尝试从页面中提取数据
+        product_info = ProductInfo(
+            product_id=product_id,
+            title="",
+            main_images=[],
+            detail_images=[],
+            sku_images=[]
+        )
+
+        # 查找 JSON 数据
+        patterns = [
+            r'window\.__INITIAL_PROPS__\s*=\s*({.+?});',
+            r'window\.__INITIAL_STATE__\s*=\s*({.+?});',
+            r'"product"\s*:\s*({.+?})\s*,\s*"',
+            r'window\.rawData\s*=\s*({.+?});',
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, html, re.DOTALL)
+            if match:
+                try:
+                    data = json.loads(match.group(1))
+                    result = self._extract_from_page_data(data, product_id)
+                    if result.main_images:
+                        return result
+                except json.JSONDecodeError:
+                    continue
+
+        # 直接提取图片URL
+        image_urls = self._extract_images_from_html(html)
+
+        main_images = []
+        detail_images = []
+
+        for i, img_url in enumerate(image_urls):
+            img = ProductImage(url=img_url, image_type="main" if i < 5 else "detail")
+            if i < 5:
+                main_images.append(img)
+            else:
+                detail_images.append(img)
+
+        product_info.main_images = main_images
+        product_info.detail_images = detail_images
+
+        # 提取标题
+        title_match = re.search(r'<title>(.+?)</title>', html)
+        if title_match:
+            product_info.title = title_match.group(1).split('-')[0].strip()
+
+        return product_info
 
     async def _parse_from_api(self, product_id: str) -> ProductInfo:
         """
@@ -135,16 +285,227 @@ class DouyinProductParser:
         product_data = data.get('data', {})
         return self._extract_product_info(product_data, product_id)
 
+    async def _parse_with_undetected(self, product_id: str, url: str) -> ProductInfo:
+        """
+        使用 undetected-chromedriver 绕过反爬虫检测
+        """
+        import time
+
+        if not HAS_UNDETECTED:
+            raise Exception("undetected-chromedriver not installed")
+
+        def extract_sync():
+            options = uc.ChromeOptions()
+            options.add_argument('--headless=new')
+            options.add_argument('--no-sandbox')
+            options.add_argument('--disable-dev-shm-usage')
+            options.add_argument('--window-size=375,812')
+            options.add_argument('--user-agent=Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1')
+
+            driver = uc.Chrome(options=options)
+
+            try:
+                # 构建URL
+                target_url = url
+                if 'jinritemai.com' not in url and 'haohuo' not in url:
+                    target_url = f"https://haohuo.jinritemai.com/views/product/item2?id={product_id}"
+
+                driver.get(target_url)
+                time.sleep(10)  # 等待JS渲染
+
+                page_source = driver.page_source
+
+                # 检查商品是否下架
+                if 'product-down' in page_source or '已下架' in page_source:
+                    raise Exception("商品已下架或不存在")
+
+                # 提取图片
+                images = driver.find_elements(By.TAG_NAME, 'img')
+                img_urls = []
+                for img in images:
+                    src = img.get_attribute('src') or img.get_attribute('data-src')
+                    if src and len(src) > 50 and not src.startswith('data:'):
+                        if self._is_product_image(src):
+                            img_urls.append(src)
+
+                # 提取标题
+                title = ""
+                try:
+                    title_elem = driver.find_element(By.CSS_SELECTOR, 'h1, .product-title, [class*="title"]')
+                    title = title_elem.text
+                except:
+                    pass
+
+                # 提取价格
+                price = ""
+                try:
+                    price_elem = driver.find_element(By.CSS_SELECTOR, '[class*="price"], .price')
+                    price = price_elem.text
+                except:
+                    pass
+
+                return {
+                    'title': title,
+                    'price': price,
+                    'images': img_urls
+                }
+
+            finally:
+                driver.quit()
+
+        # 在线程池中运行同步代码
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, extract_sync)
+
+        # 分类图片
+        main_images = []
+        detail_images = []
+
+        for i, img_url in enumerate(result['images']):
+            clean_url = self._get_high_quality_url(img_url)
+            img = ProductImage(
+                url=clean_url,
+                image_type="main" if i < 5 else "detail"
+            )
+            if i < 5:
+                main_images.append(img)
+            else:
+                detail_images.append(img)
+
+        return ProductInfo(
+            product_id=product_id,
+            title=result.get('title', '').strip(),
+            price=result.get('price', '').strip(),
+            original_price="",
+            shop_name="",
+            sales="",
+            main_images=main_images,
+            detail_images=detail_images,
+            sku_images=[],
+            video_url=None
+        )
+
+    async def _parse_with_playwright(self, url: str, product_id: str) -> ProductInfo:
+        """
+        使用 Playwright 渲染 JS 页面并提取商品信息
+        """
+        async with async_playwright() as p:
+            # 使用反检测参数
+            browser = await p.chromium.launch(
+                headless=True,
+                args=[
+                    '--disable-blink-features=AutomationControlled',
+                    '--disable-dev-shm-usage',
+                    '--no-sandbox',
+                ]
+            )
+
+            # 设置更真实的浏览器上下文
+            context = await browser.new_context(
+                viewport={'width': 1920, 'height': 1080},
+                user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                locale='zh-CN',
+            )
+
+            page = await context.new_page()
+
+            # 移除 webdriver 标记
+            await page.add_init_script('''
+                Object.defineProperty(navigator, 'webdriver', {
+                    get: () => undefined
+                });
+            ''')
+
+            try:
+                await page.goto(url, wait_until='networkidle', timeout=30000)
+
+                # 等待图片加载
+                await page.wait_for_timeout(2000)
+
+                # 提取所有图片
+                images = await page.evaluate('''() => {
+                    const images = [];
+                    const imgElements = document.querySelectorAll('img');
+                    imgElements.forEach(img => {
+                        const src = img.src || img.dataset.src;
+                        if (src && (src.includes('ecombdimg') || src.includes('ecombdstatic') ||
+                            src.includes('byteimg') || src.includes('tiktokcdn'))) {
+                            images.push(src);
+                        }
+                    });
+                    return images;
+                }''')
+
+                # 提取标题
+                title = await page.evaluate('''() => {
+                    const titleEl = document.querySelector('h1, .product-title, [class*="title"]');
+                    return titleEl ? titleEl.innerText : '';
+                }''')
+
+                # 提取价格
+                price = await page.evaluate('''() => {
+                    const priceEl = document.querySelector('[class*="price"], .price');
+                    return priceEl ? priceEl.innerText : '';
+                }''')
+
+            finally:
+                await browser.close()
+
+        # 分类图片
+        main_images = []
+        detail_images = []
+
+        for i, img_url in enumerate(images):
+            # 清理URL
+            clean_url = self._get_high_quality_url(img_url)
+            if not self._is_product_image(clean_url):
+                continue
+
+            img = ProductImage(
+                url=clean_url,
+                image_type="main" if i < 5 else "detail"
+            )
+
+            if i < 5:
+                main_images.append(img)
+            else:
+                detail_images.append(img)
+
+        return ProductInfo(
+            product_id=product_id,
+            title=title.strip() if title else "",
+            price=price.strip() if price else "",
+            original_price="",
+            shop_name="",
+            sales="",
+            main_images=main_images,
+            detail_images=detail_images,
+            sku_images=[],
+            video_url=None
+        )
+
     async def _parse_from_webpage(self, product_id: str, url: str) -> ProductInfo:
         """
         从网页中提取商品信息
         """
         # 构建商品详情页URL
-        if 'haohuo.douyin.com' not in url:
+        if 'haohuo.douyin.com' not in url and 'jinritemai.com' not in url:
             url = f"https://haohuo.douyin.com/goods/{product_id}"
 
-        response = await self.client.get(url)
-        html = response.text
+        # 对于 jinritemai.com 使用 Playwright（JS渲染页面）
+        if 'jinritemai.com' in url:
+            return await self._parse_with_playwright(url, product_id)
+
+        # 使用新的客户端避免代理问题
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+            'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+        }
+
+        async with httpx.AsyncClient(headers=headers, follow_redirects=True, timeout=30.0) as client:
+            response = await client.get(url)
+            html = response.text
 
         # 从页面中提取数据
         product_info = ProductInfo(
